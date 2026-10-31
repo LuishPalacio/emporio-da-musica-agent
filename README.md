@@ -1,5 +1,7 @@
 # Empório da Música — Agente de Atendimento
 
+*[🇺🇸 English version](README.en.md)*
+
 Protótipo de agente de atendimento ao cliente para a Empório da Música, uma loja fictícia de
 instrumentos musicais em Campo Grande/MS. O agente ("Sol") conversa por texto, consulta dados
 reais da operação (catálogo, estoque, pedidos, promoções) e as políticas internas da loja, e
