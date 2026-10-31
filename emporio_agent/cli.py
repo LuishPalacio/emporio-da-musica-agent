@@ -23,13 +23,24 @@ import sys
 from . import config, database, session
 from .agent import EmporioAgent
 
+# O console do Windows abre em cp1252 (ou outra codepage legada) por
+# padrão, não em UTF-8 -- e o modelo eventualmente responde com um
+# emoji ou outro caractere fora do cp1252 (ex.: 😊), o que derrubava o
+# processo inteiro com UnicodeEncodeError no print(). reconfigure()
+# (Python 3.7+) força stdout/stderr para UTF-8 com errors="replace"
+# como rede de segurança, sem exigir que quem rode o projeto troque a
+# codepage do terminal manualmente (`chcp 65001`) antes de usar o CLI.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 
 def _check_api_key() -> None:
-    if not config.ANTHROPIC_API_KEY:
+    if not config.GROQ_API_KEY:
         print(
-            "ERRO: variável de ambiente ANTHROPIC_API_KEY não encontrada.\n"
-            "Copie .env.example para .env e preencha com sua chave "
-            "(https://console.anthropic.com/settings/keys).",
+            "ERRO: variável de ambiente GROQ_API_KEY não encontrada.\n"
+            "Copie .env.example para .env e preencha com sua chave gratuita "
+            "(https://console.groq.com/keys).",
             file=sys.stderr,
         )
         sys.exit(1)

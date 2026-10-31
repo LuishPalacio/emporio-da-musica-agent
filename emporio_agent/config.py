@@ -48,15 +48,27 @@ MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "emporio_dev_only")
 MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "emporio_musica")
 
 # --- Modelo / provedor ----------------------------------------------------
+#
+# Provedor: Groq (https://console.groq.com), escolhido por ser gratuito
+# (sem cartão de crédito, cota generosa no plano free) e por expor uma
+# API compatível com o formato da OpenAI -- incluindo tool calling, o
+# mecanismo central deste agente. Usamos o pacote `openai` apontando
+# pra base_url da Groq em vez de um SDK próprio da Groq: é a forma
+# oficialmente documentada de integrar, e evita mais uma dependência
+# só pra isso. Justificativa completa (e as alternativas pagas/locais
+# consideradas) está no README.
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
-# Modelo padrão: um Claude Sonnet atual. É o ponto de equilíbrio entre
-# qualidade de raciocínio (necessária para seguir várias regras de
-# política ao mesmo tempo e decidir corretamente quando chamar cada
-# ferramenta) e custo/latência para um caso de uso de atendimento ao
-# cliente. Veja a justificativa completa no README.
-MODEL_NAME = os.environ.get("EMPORIO_MODEL", "claude-sonnet-5")
+# Modelo padrão: openai/gpt-oss-120b, o modelo open-weight da OpenAI
+# hospedado pela Groq com foco declarado em tool-calling confiável --
+# exatamente a capacidade mais importante para este agente (decidir
+# corretamente QUANDO chamar cada ferramenta, e com quais parâmetros).
+# openai/gpt-oss-20b é a alternativa mais rápida/leve, caso a latência
+# ou os limites de taxa do plano gratuito pesem mais que a qualidade
+# de raciocínio em algum cenário de uso.
+MODEL_NAME = os.environ.get("EMPORIO_MODEL", "openai/gpt-oss-120b")
 
 MAX_TOKENS = int(os.environ.get("EMPORIO_MAX_TOKENS", "1024"))
 

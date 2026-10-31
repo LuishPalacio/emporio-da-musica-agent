@@ -1,35 +1,38 @@
 """Loop de orquestração do agente: manda a mensagem pro modelo, executa
 as ferramentas que ele pedir, e repete até ele ter uma resposta final.
 
-Esse é o padrão padrão de "tool use" / function calling da Anthropic:
-1. Manda `messages` + a lista de `tools` disponíveis pro modelo.
-2. Se o modelo responder com `stop_reason == "tool_use"`, ele incluiu
-   um ou mais blocos `tool_use` no conteúdo da resposta -- cada um
-   pedindo pra chamar uma função com certos parâmetros.
+Esse é o padrão padrão de "tool calling" / function calling no formato
+da OpenAI (que a Groq implementa de forma compatível -- ver
+config.GROQ_BASE_URL e a justificativa de provedor no README):
+
+1. Manda `messages` (com o prompt de sistema na frente) + a lista de
+   `tools` disponíveis pro modelo via `chat.completions.create`.
+2. Se `finish_reason == "tool_calls"`, a mensagem de resposta do
+   modelo trouxe um ou mais `tool_calls` -- cada um pedindo pra chamar
+   uma função com certos argumentos (como uma string JSON).
 3. O código (não o modelo) executa essas funções de verdade (ver
-   tools.execute_tool) e manda o resultado de volta como uma nova
-   mensagem de role="user" com blocos `tool_result`.
-4. Repete até o modelo responder com `stop_reason == "end_turn"`
-   (ou similar) -- aí o texto da resposta é a resposta final pro
-   cliente.
+   tools.execute_tool) e manda o resultado de volta como uma mensagem
+   de role="tool", referenciando o `tool_call_id` correspondente.
+4. Repete até o modelo responder com `finish_reason == "stop"` -- aí o
+   `content` da mensagem é a resposta final pro cliente.
 
 Isso é diferente de um agente "ReAct" clássico com prompting manual
-(tipo "Thought: ... Action: ... Observation: ...") porque o
-tool-use da Anthropic já faz esse ciclo de forma estruturada e
-nativa da API -- não precisamos fazer parsing de texto livre pra
-extrair qual ferramenta o modelo quer chamar, o que é mais frágil.
+(tipo "Thought: ... Action: ... Observation: ..." em texto livre)
+porque o tool calling da API já faz esse ciclo de forma estruturada --
+não precisamos fazer parsing de texto pra extrair qual ferramenta o
+modelo quer chamar e com quais parâmetros, o que seria mais frágil.
 """
 
 from __future__ import annotations
 
 import json
 
-import anthropic
+import openai
 
 from . import config, tools
 from .prompts import build_system_prompt
 
-# Limite de idas e vindas de tool-use dentro de UM turno de usuário.
+# Limite de idas e vindas de tool-calling dentro de UM turno de usuário.
 # Existe só como rede de segurança contra um loop infinito (ex.: o
 # modelo insistindo em chamar a mesma ferramenta com os mesmos
 # parâmetros) -- nunca deveria ser atingido numa conversa normal, já
@@ -39,59 +42,78 @@ MAX_TOOL_ITERATIONS = 8
 
 
 class EmporioAgent:
-    """Encapsula o cliente da Anthropic + o laço de tool-use.
+    """Encapsula o cliente (Groq via SDK da OpenAI) + o laço de tool calling.
 
     Mantém o client como atributo (em vez de recriar a cada chamada)
     porque o SDK reaproveita conexão HTTP entre requisições.
     """
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
-        self.client = anthropic.Anthropic(api_key=api_key or config.ANTHROPIC_API_KEY)
+        self.client = openai.OpenAI(
+            api_key=api_key or config.GROQ_API_KEY,
+            base_url=config.GROQ_BASE_URL,
+        )
         self.model = model or config.MODEL_NAME
         self.system_prompt = build_system_prompt()
 
     def send(self, messages: list[dict], user_text: str) -> tuple[str, list[dict]]:
         """Processa uma mensagem do usuário até chegar numa resposta final.
 
-        Recebe o histórico anterior (`messages`, no formato de
-        `messages` da API) e o texto novo do usuário. Devolve
-        (texto_da_resposta, novo_historico_completo) -- quem chama
-        (cli.py) decide o que fazer com o novo histórico (tipicamente,
-        persistir via session.save_messages).
+        Recebe o histórico anterior (`messages`, SEM a mensagem de
+        sistema -- ela é adicionada aqui dentro a cada chamada, pois
+        inclui a data/hora atual e não deveria "congelar" no que foi
+        persistido de uma sessão antiga) e o texto novo do usuário.
+        Devolve (texto_da_resposta, novo_historico_sem_sistema) -- quem
+        chama (cli.py) decide o que fazer com o novo histórico
+        (tipicamente, persistir via session.save_messages).
         """
 
         messages = [*messages, {"role": "user", "content": user_text}]
 
         final_text = ""
         for _ in range(MAX_TOOL_ITERATIONS):
-            response = self.client.messages.create(
+            api_messages = [{"role": "system", "content": self.system_prompt}, *messages]
+            response = self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=config.MAX_TOKENS,
-                system=self.system_prompt,
                 tools=tools.TOOLS,
-                messages=messages,
+                tool_choice="auto",
+                messages=api_messages,
             )
 
-            assistant_content = [_serialize_content_block(b) for b in response.content]
-            messages.append({"role": "assistant", "content": assistant_content})
+            choice = response.choices[0]
+            message = choice.message
 
-            tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
-            if not tool_use_blocks:
-                final_text = _extract_text(response.content)
+            assistant_entry: dict = {"role": "assistant", "content": message.content}
+            if message.tool_calls:
+                assistant_entry["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in message.tool_calls
+                ]
+            messages.append(assistant_entry)
+
+            if not message.tool_calls:
+                final_text = (message.content or "").strip()
                 break
 
-            tool_results = []
-            for block in tool_use_blocks:
-                result = tools.execute_tool(block.name, block.input)
-                tool_results.append(
+            for tc in message.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                except json.JSONDecodeError:
+                    result = {"error": f"Argumentos inválidos (JSON malformado): {tc.function.arguments!r}"}
+                else:
+                    result = tools.execute_tool(tc.function.name, args)
+                messages.append(
                     {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
+                        "role": "tool",
+                        "tool_call_id": tc.id,
                         "content": json.dumps(result, ensure_ascii=False, default=str),
-                        "is_error": "error" in result,
                     }
                 )
-            messages.append({"role": "user", "content": tool_results})
         else:
             # saiu do loop por exceder MAX_TOOL_ITERATIONS sem resposta final
             final_text = (
@@ -101,29 +123,3 @@ class EmporioAgent:
             )
 
         return final_text, messages
-
-
-def _extract_text(content_blocks) -> str:
-    return "".join(b.text for b in content_blocks if b.type == "text").strip()
-
-
-def _serialize_content_block(block) -> dict:
-    """Converte um bloco de resposta do SDK (objeto pydantic) num dict
-    simples, só com os campos que o próprio formato de `messages` da
-    API espera de volta.
-
-    Não usamos `block.model_dump()` direto: ele inclui campos só de
-    resposta (ex.: `citations`, `caller`) que não fazem parte do
-    schema de entrada (`MessageParam`) e, em tese, poderiam ser
-    rejeitados pela API num request futuro. Serializar explicitamente
-    por tipo é mais verboso, mas deixa claro exatamente o que
-    persistimos e reenviamos.
-    """
-
-    if block.type == "text":
-        return {"type": "text", "text": block.text}
-    if block.type == "tool_use":
-        return {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
-    # outros tipos de bloco (ex.: thinking, se algum dia habilitado) --
-    # preserva como dict genérico em vez de quebrar
-    return block.model_dump()

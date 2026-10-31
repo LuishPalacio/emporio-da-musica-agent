@@ -1,9 +1,10 @@
 """Ferramentas (function calling) expostas ao modelo.
 
 Este módulo é o único lugar onde o agente "toca" dados de verdade. Cada
-função pública aqui corresponde a uma `tool` no formato da API da
-Anthropic (ver `TOOLS`), e `execute_tool` é o dispatcher chamado pelo
-loop de orquestração em agent.py sempre que o modelo pede uma tool call.
+função pública aqui corresponde a uma `tool` no formato de function
+calling da OpenAI/Groq (ver `TOOLS`), e `execute_tool` é o dispatcher
+chamado pelo loop de orquestração em agent.py sempre que o modelo pede
+uma tool call.
 
 Princípio de design: o modelo nunca recebe acesso de leitura livre ao
 banco (nada de "rode esse SQL" ou "liste a tabela X inteira"). Cada
@@ -298,6 +299,15 @@ def get_order_status(order_id: int | None = None, phone: str | None = None) -> d
                     customer_ids,
                 )
                 order_rows = cur.fetchall()
+                # a própria busca já FOI a verificação de identidade --
+                # os pedidos só voltaram porque batem com esse telefone.
+                # Marcar explicitamente como True (em vez de deixar o
+                # campo ausente/None) evita que o modelo interprete
+                # "não verificado" onde na verdade o telefone é a chave
+                # de busca -- isso aconteceu de verdade num teste manual
+                # (ver tests/test_tools.py::test_order_status_by_phone_*).
+                for row in order_rows:
+                    row["_phone_matches"] = True
 
             if not order_rows:
                 return {"found": False, "orders": [], "message": "Nenhum pedido encontrado."}
@@ -354,92 +364,89 @@ def search_store_policies(question: str) -> dict:
     }
 
 
-# --- schemas (formato de tool use da Anthropic) -----------------------------
+# --- schemas (formato de tool/function calling da OpenAI, usado pela Groq) --
+#
+# A Groq expõe uma API compatível com a da OpenAI, inclusive no formato
+# de tools: cada ferramenta é {"type": "function", "function": {name,
+# description, parameters}}, onde `parameters` é um JSON Schema igual
+# ao que já era usado (mesmo "shape" de sempre, só aninhado um nível a
+# mais que no formato nativo da Anthropic). `_tool(...)` só existe pra
+# não repetir esse envelope em cada uma das 6 ferramentas abaixo.
+
+
+def _tool(name: str, description: str, properties: dict, required: list[str] | None = None) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required or [],
+            },
+        },
+    }
+
 
 TOOLS: list[dict] = [
-    {
-        "name": "search_products",
-        "description": (
-            "Busca produtos ATIVOS no catálogo da loja por termo de busca, categoria "
-            "e/ou faixa de preço. Use para perguntas como 'quais violões vocês têm até "
-            "R$1000', 'tem guitarra Fender', 'o que vocês têm de ukulele'. Nunca invente "
-            "produtos ou preços — sempre chame esta ferramenta antes de responder."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Termo livre buscado no nome/descrição do produto (opcional)."},
-                "category": {"type": "string", "description": "Nome (ou parte) de uma categoria, ex.: 'violões', 'guitarras', 'ukuleles' (opcional)."},
-                "max_price": {"type": "number", "description": "Preço máximo em reais (opcional)."},
-                "min_price": {"type": "number", "description": "Preço mínimo em reais (opcional)."},
-                "only_in_stock": {"type": "boolean", "description": "Se true, mostra só produtos com estoque > 0."},
-            },
+    _tool(
+        "search_products",
+        "Busca produtos ATIVOS no catálogo da loja por termo de busca, categoria "
+        "e/ou faixa de preço. Use para perguntas como 'quais violões vocês têm até "
+        "R$1000', 'tem guitarra Fender', 'o que vocês têm de ukulele'. Nunca invente "
+        "produtos ou preços — sempre chame esta ferramenta antes de responder.",
+        {
+            "query": {"type": "string", "description": "Termo livre buscado no nome/descrição do produto (opcional)."},
+            "category": {"type": "string", "description": "Nome (ou parte) de uma categoria, ex.: 'violões', 'guitarras', 'ukuleles' (opcional)."},
+            "max_price": {"type": "number", "description": "Preço máximo em reais (opcional)."},
+            "min_price": {"type": "number", "description": "Preço mínimo em reais (opcional)."},
+            "only_in_stock": {"type": "boolean", "description": "Se true, mostra só produtos com estoque > 0."},
         },
-    },
-    {
-        "name": "get_product_details",
-        "description": (
-            "Busca os detalhes completos de UM produto específico pelo ID numérico ou "
-            "pelo nome (aceita nome parcial, ex.: 'Takamine GD20'). Use quando o cliente "
-            "perguntar o preço, as especificações ou a disponibilidade de um modelo "
-            "específico. Ao contrário de search_products, também encontra produtos "
-            "descontinuados ou 'em breve' — use isso para explicar a situação ao cliente."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "identifier": {"type": "string", "description": "ID do produto ou nome/parte do nome do produto."},
-            },
-            "required": ["identifier"],
+    ),
+    _tool(
+        "get_product_details",
+        "Busca os detalhes completos de UM produto específico pelo ID numérico ou "
+        "pelo nome (aceita nome parcial, ex.: 'Takamine GD20'). Use quando o cliente "
+        "perguntar o preço, as especificações ou a disponibilidade de um modelo "
+        "específico. Ao contrário de search_products, também encontra produtos "
+        "descontinuados ou 'em breve' — use isso para explicar a situação ao cliente.",
+        {"identifier": {"type": "string", "description": "ID do produto ou nome/parte do nome do produto."}},
+        required=["identifier"],
+    ),
+    _tool(
+        "list_categories",
+        "Lista todas as categorias de instrumentos que a loja vende. Use para responder "
+        "'o que vocês vendem' ou para confirmar se um tipo de item está no escopo da loja.",
+        {},
+    ),
+    _tool(
+        "get_active_promotions",
+        "Lista os produtos com promoção/desconto ATIVO no momento, opcionalmente filtrando "
+        "por categoria. Use antes de confirmar qualquer desconto ao cliente — nunca prometa "
+        "uma promoção sem checar aqui primeiro.",
+        {"category": {"type": "string", "description": "Filtra por categoria (opcional)."}},
+    ),
+    _tool(
+        "get_order_status",
+        "Consulta o status, rastreio e itens de um pedido. Informe order_id se o cliente "
+        "souber o número do pedido, ou phone para listar os pedidos mais recentes "
+        "associados a esse telefone. Use sempre que o cliente perguntar sobre um pedido, "
+        "entrega, rastreamento ou nota fiscal.",
+        {
+            "order_id": {"type": "integer", "description": "Número do pedido (opcional se phone for informado)."},
+            "phone": {"type": "string", "description": "Telefone do cliente, em qualquer formato (opcional se order_id for informado)."},
         },
-    },
-    {
-        "name": "list_categories",
-        "description": "Lista todas as categorias de instrumentos que a loja vende. Use para responder 'o que vocês vendem' ou para confirmar se um tipo de item está no escopo da loja.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "get_active_promotions",
-        "description": "Lista os produtos com promoção/desconto ATIVO no momento, opcionalmente filtrando por categoria. Use antes de confirmar qualquer desconto ao cliente — nunca prometa uma promoção sem checar aqui primeiro.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "category": {"type": "string", "description": "Filtra por categoria (opcional)."},
-            },
-        },
-    },
-    {
-        "name": "get_order_status",
-        "description": (
-            "Consulta o status, rastreio e itens de um pedido. Informe order_id se o "
-            "cliente souber o número do pedido, ou phone para listar os pedidos mais "
-            "recentes associados a esse telefone. Use sempre que o cliente perguntar "
-            "sobre um pedido, entrega, rastreamento ou nota fiscal."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "order_id": {"type": "integer", "description": "Número do pedido (opcional se phone for informado)."},
-                "phone": {"type": "string", "description": "Telefone do cliente, em qualquer formato (opcional se order_id for informado)."},
-            },
-        },
-    },
-    {
-        "name": "search_store_policies",
-        "description": (
-            "Busca, no manual oficial de políticas da loja, o trecho mais relevante para "
-            "uma pergunta sobre regras — trocas, devoluções, garantia, frete, parcelamento, "
-            "LGPD etc. Use sempre que o cliente perguntar sobre uma regra da loja em vez "
-            "de confiar na memória: o texto devolvido é a fonte oficial a ser citada."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "question": {"type": "string", "description": "A pergunta ou tópico de política (ex.: 'posso devolver uma compra online')."},
-            },
-            "required": ["question"],
-        },
-    },
+    ),
+    _tool(
+        "search_store_policies",
+        "Busca, no manual oficial de políticas da loja, o trecho mais relevante para uma "
+        "pergunta sobre regras — trocas, devoluções, garantia, frete, parcelamento, LGPD "
+        "etc. Use sempre que o cliente perguntar sobre uma regra da loja em vez de confiar "
+        "na memória: o texto devolvido é a fonte oficial a ser citada.",
+        {"question": {"type": "string", "description": "A pergunta ou tópico de política (ex.: 'posso devolver uma compra online')."}},
+        required=["question"],
+    ),
 ]
 
 _DISPATCH = {
