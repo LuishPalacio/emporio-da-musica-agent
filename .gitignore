@@ -1,0 +1,23 @@
+# Ambiente / segredos
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# Banco de dados gerado a partir dos CSVs (artefato de build, não fonte de verdade)
+data/emporio.db
+
+# Histórico de conversas em runtime (dados de sessão, não devem ir pro repo)
+conversations/*.json
+
+# Editores / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
