@@ -1,4 +1,4 @@
-# Empório da Música — Agente de Atendimento (protótipo)
+# Empório da Música — Agente de Atendimento
 
 Protótipo de agente de atendimento ao cliente para a Empório da Música, uma loja fictícia de
 instrumentos musicais em Campo Grande/MS. O agente ("Sol") conversa por texto, consulta dados
@@ -342,6 +342,3 @@ sessão).
   — útil para depurar comportamento em produção.
 
 ---
-
-Co-desenvolvido com Claude (Anthropic) via Claude Code, com decisões de arquitetura discutidas e
-validadas em conjunto a cada etapa (ver histórico de commits).
