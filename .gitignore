@@ -21,3 +21,7 @@ conversations/*.json
 .idea/
 .DS_Store
 Thumbs.db
+
+# PDF de candidatura gerado a partir do README (material de aplicação pessoal,
+# não faz parte do código/projeto em si)
+*.pdf

@@ -17,6 +17,7 @@ decisões técnicas tomadas (e por quê) e as limitações conhecidas.
 - [Decisões técnicas e justificativas](#decisões-técnicas-e-justificativas)
 - [Estrutura do projeto](#estrutura-do-projeto)
 - [Exemplos de conversa](#exemplos-de-conversa)
+- [Uso de assistente de IA (workflow)](#uso-de-assistente-de-ia-workflow)
 - [Limitações conhecidas e o que eu faria com mais tempo](#limitações-conhecidas-e-o-que-eu-faria-com-mais-tempo)
 
 ## Como rodar
@@ -313,6 +314,49 @@ institucional, preço de produto específico, aplicação da política de devolu
 não-trivial com produto fora de estoque + sugestão de alternativa + consulta de pedido com
 verificação leve de identidade, numa conversa multi-turno (demonstrando também a persistência de
 sessão).
+
+## Uso de assistente de IA (workflow)
+
+Usei o **Claude Code** (CLI agêntica da Anthropic, rodando integrada ao terminal do VS Code) como
+par de desenvolvimento neste projeto, do início ao fim. Acho importante ser transparente sobre
+*como*, porque "usei IA" sozinho não diz muita coisa — o que importa é se as decisões foram minhas
+e se eu entendo e consigo justificar cada uma delas (acho que o histórico de commits e as seções
+acima já mostram isso, mas vale explicar o processo).
+
+**O formato foi iterativo, não "um prompt e pronto":**
+
+- Eu dei o contexto do desafio e os dados, e a Claude Code propôs uma primeira arquitetura
+  (function calling + SQLite + Anthropic Claude). A partir daí, cada decisão de peso foi uma
+  conversa, não uma aceitação automática:
+  - Questionei se SQLite fazia sentido pra um repositório público que outras pessoas avaliariam, e
+    decidimos juntos migrar pra MySQL com Docker Compose — com o trade-off explicado antes da
+    troca, não depois.
+  - Pedi explicitamente pra trocar o provedor de LLM pago (Anthropic) por um gratuito, e escolhi o
+    modelo específico (`openai/gpt-oss-120b` na Groq) comparando as opções que o próprio console da
+    Groq mostrava, não só aceitando a primeira sugestão.
+- Pedi pra validar o agente **rodando de verdade** contra o modelo real a cada mudança importante,
+  não só com os testes automatizados. Isso achou bugs de comportamento reais que só apareceriam em
+  uso de verdade — por exemplo, o modelo ficando excessivamente cauteloso por interpretar mal um
+  campo `null`, e o modelo se oferecendo pra "gerar um link de pagamento" que o agente não tem
+  ferramenta nenhuma pra fazer. Os dois foram corrigidos e reconfirmados com um novo teste ao vivo,
+  não só "corrigidos no código e seguiu em frente".
+- Antes de considerar o projeto pronto, pedi uma validação completa **do zero**: clonar o
+  repositório público numa pasta separada e seguir só o que está escrito neste README, como um
+  avaliador faria. Isso achou um bug de verdade (`container_name` fixo no `docker-compose.yml`
+  quebrando quando o mesmo repositório é rodado de dois lugares ao mesmo tempo) que não aparecia no
+  ambiente que já estava configurado.
+- O histórico de commits é incremental de propósito — cada commit corresponde a uma unidade real de
+  progresso (camada de dados, ferramentas, RAG de políticas, loop do agente, migração de provedor,
+  documentação, exemplos), não um único commit com o projeto inteiro no final.
+
+**O que ficou comigo, não com a ferramenta:** a leitura do PDF de políticas (inclusive notar a
+divergência de telefone entre as seções 1.2 e 7, e decidir documentar em vez de "corrigir"
+silenciosamente), as escolhas de arquitetura (banco, provedor, modelo, estratégia de retrieval), a
+decisão de quando um comportamento estava "bom o suficiente" vs. quando valia a pena investigar
+mais, e a decisão final de escopo (o que entrou nas limitações conhecidas em vez de ser resolvido
+agora). A ferramenta acelerou bastante a implementação e me ajudou a pegar bugs que eu
+provavelmente levaria mais tempo pra notar sozinho testando manualmente — mas o raciocínio de
+engenharia por trás de cada decisão é algo que eu discuti, entendi e consigo explicar.
 
 ## Limitações conhecidas e o que eu faria com mais tempo
 

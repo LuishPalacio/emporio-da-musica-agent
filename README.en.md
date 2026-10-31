@@ -17,6 +17,7 @@ technical decisions made (and why), and the known limitations.
 - [Technical decisions and justifications](#technical-decisions-and-justifications)
 - [Project structure](#project-structure)
 - [Example conversations](#example-conversations)
+- [AI assistant usage (workflow)](#ai-assistant-usage-workflow)
 - [Known limitations and what I'd do with more time](#known-limitations-and-what-id-do-with-more-time)
 
 ## How to run it
@@ -310,6 +311,49 @@ agent against Groq, not hand-written), covering: catalog search filtered by pric
 information, a specific product's price, applying the return policy, and a non-trivial scenario
 with an out-of-stock product + a real alternative suggestion + an order lookup with a light
 identity check, in a multi-turn conversation (which also demonstrates session persistence).
+
+## AI assistant usage (workflow)
+
+I used **Claude Code** (Anthropic's agentic CLI, running integrated into the VS Code terminal) as
+my development pair on this project, from start to finish. I think it's worth being specific about
+*how*, because "I used AI" alone doesn't say much — what matters is whether the decisions were
+mine, and whether I understand and can justify each of them (I think the sections above already
+show that, but it's worth spelling out the process).
+
+**The format was iterative, not "one prompt and done":**
+
+- I gave the challenge context and the data, and Claude Code proposed a first architecture
+  (function calling + SQLite + Anthropic Claude). From there, every significant decision was a
+  discussion, not an automatic acceptance:
+  - I questioned whether SQLite made sense for a public repository other people would evaluate, and
+    we migrated to MySQL with Docker Compose together — with the trade-off explained before the
+    switch, not after.
+  - I explicitly asked to swap the paid LLM provider (Anthropic) for a free one, and I picked the
+    specific model (`openai/gpt-oss-120b` on Groq) by comparing the options Groq's own console
+    showed me, rather than just accepting the first suggestion.
+- I asked for the agent to be validated by **actually running it** against the real model after
+  every significant change, not just with automated tests. That caught real behavioral bugs that
+  would only show up in real use — for instance, the model becoming overly cautious because it
+  misread a `null` field, and the model offering to "generate a payment link" that the agent has no
+  tool to create. Both were fixed and then re-confirmed with a fresh live test, not just "fixed in
+  the code and moved on".
+- Before considering the project done, I asked for a full validation **from scratch**: cloning the
+  public repository into a separate folder and following only what's written in this README, the
+  way an evaluator would. That caught a real bug (a hardcoded `container_name` in
+  `docker-compose.yml` that broke when the same repository is run from two places at once) that
+  didn't show up in the already-configured environment.
+- The commit history is deliberately incremental — each commit corresponds to a real unit of
+  progress (data layer, tools, policy RAG, agent loop, provider migration, docs, examples), not one
+  single commit with the entire project at the end.
+
+**What stayed with me, not the tool:** reading the policy PDF carefully (including noticing the
+phone-number discrepancy between sections 1.2 and 7, and deciding to document it instead of
+silently "fixing" it), the architecture choices (database, provider, model, retrieval strategy),
+deciding when a behavior was "good enough" versus worth investigating further, and the final scope
+call (what went into known limitations instead of being solved right now). The tool sped up
+implementation a lot and helped me catch bugs I'd probably have taken longer to notice testing
+manually on my own — but the engineering reasoning behind each decision is something I discussed,
+understood, and can explain.
 
 ## Known limitations and what I'd do with more time
 
