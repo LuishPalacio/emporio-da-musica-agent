@@ -1,9 +1,15 @@
 """Testes de session.py, com foco no corte de histórico por turnos.
 
-O ponto delicado testado aqui: tool_use (assistant) e tool_result
-(user, mas com content em lista, não string) precisam ficar
-emparelhados depois do corte -- um corte no meio quebraria a próxima
-chamada à API da Anthropic.
+Os helpers abaixo montam mensagens no mesmo formato que agent.py
+realmente produz (chat completions da OpenAI/Groq): uma chamada de
+ferramenta é um `tool_calls` dentro da mensagem do assistant (não um
+bloco de conteúdo separado como no formato nativo da Anthropic), e o
+resultado da ferramenta é uma mensagem própria com role="tool" (não
+role="user" como seria no formato da Anthropic). O ponto delicado
+testado aqui: uma mensagem assistant-com-tool_calls e a(s)
+mensagem(ns) role="tool" que a seguem precisam ficar emparelhadas
+depois do corte -- um corte no meio quebraria a próxima chamada à API
+(ela exige um resultado para cada tool_call pendente).
 """
 
 import json
@@ -16,18 +22,21 @@ def _user(text):
 
 
 def _assistant_text(text):
-    return {"role": "assistant", "content": [{"type": "text", "text": text}]}
+    return {"role": "assistant", "content": text}
 
 
-def _assistant_tool_use(tool_id, name, input_):
-    return {"role": "assistant", "content": [{"type": "tool_use", "id": tool_id, "name": name, "input": input_}]}
+def _assistant_tool_call(tool_id, name, input_):
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {"id": tool_id, "type": "function", "function": {"name": name, "arguments": json.dumps(input_)}}
+        ],
+    }
 
 
 def _tool_result(tool_id, result):
-    return {
-        "role": "user",
-        "content": [{"type": "tool_result", "tool_use_id": tool_id, "content": json.dumps(result)}],
-    }
+    return {"role": "tool", "tool_call_id": tool_id, "content": json.dumps(result)}
 
 
 def test_trim_keeps_everything_when_under_limit():
@@ -38,18 +47,18 @@ def test_trim_keeps_everything_when_under_limit():
 def test_trim_cuts_at_turn_boundary_not_in_the_middle_of_tool_pair():
     messages = [
         _user("quanto custa o Takamine GD20?"),
-        _assistant_tool_use("t1", "get_product_details", {"identifier": "Takamine GD20"}),
+        _assistant_tool_call("t1", "get_product_details", {"identifier": "Takamine GD20"}),
         _tool_result("t1", {"found": True}),
         _assistant_text("Custa R$ 2.199,00!"),
         _user("e o Martin D-28?"),
-        _assistant_tool_use("t2", "get_product_details", {"identifier": "Martin D-28"}),
+        _assistant_tool_call("t2", "get_product_details", {"identifier": "Martin D-28"}),
         _tool_result("t2", {"found": True}),
         _assistant_text("Esse custa R$ 11.499,00."),
     ]
     trimmed = session.trim_to_last_turns(messages, max_turns=1)
     # deve começar exatamente no segundo "turno real" (a segunda
     # pergunta em texto puro do usuário), nunca no meio do par
-    # tool_use/tool_result do primeiro turno
+    # assistant-tool_calls / tool-result do primeiro turno
     assert trimmed[0] == _user("e o Martin D-28?")
     assert trimmed[0]["role"] == "user" and isinstance(trimmed[0]["content"], str)
 

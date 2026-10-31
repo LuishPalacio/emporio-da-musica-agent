@@ -4,8 +4,9 @@ Por que persistir: um atendimento por chat raramente acontece num
 turno só, e perder o histórico a cada reinício do processo seria uma
 experiência ruim — o cliente teria que re-explicar o pedido toda vez.
 Cada conversa vira um arquivo `conversations/<session_id>.json` com a
-lista de mensagens no formato que a própria API da Anthropic usa
-(`role` + `content`), então carregar uma sessão de volta é simplesmente
+lista de mensagens no formato de `messages` da API (role + content,
+compatível com o formato OpenAI/Groq usado em agent.py), então
+carregar uma sessão de volta é simplesmente
 desserializar o JSON direto no parâmetro `messages` da próxima
 chamada — sem um formato intermediário próprio pra manter.
 
