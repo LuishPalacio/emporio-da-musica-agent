@@ -10,10 +10,18 @@
 # A porta externa é 3307 (não 3306) de propósito: 3306 é a porta
 # padrão do MySQL, e quem já tiver um MySQL local rodando (ex.: para
 # outro projeto) não vai ter conflito de porta ao subir este compose.
+#
+# Sem `container_name` fixo de propósito (achado validando o projeto a
+# partir de um clone limpo em paralelo ao checkout original): um nome
+# fixo é global no Docker, não escopado por projeto/pasta -- então dois
+# checkouts deste mesmo repositório (ex.: o clone de alguém avaliando o
+# desafio, rodando ao lado de uma cópia já existente) entravam em
+# conflito de nome ao tentar subir os dois. Sem essa chave, o Compose
+# nomeia o container automaticamente prefixado pelo nome da pasta do
+# projeto, e cada checkout fica isolado dos outros.
 services:
   mysql:
     image: mysql:8.4
-    container_name: emporio-musica-mysql
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: root_dev_only
