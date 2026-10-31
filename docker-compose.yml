@@ -1,0 +1,34 @@
+# Sobe um MySQL local para o agente da Empório da Música.
+#
+# Por que Docker Compose em vez de pedir pra instalar MySQL "nativo":
+# este repositório é público e qualquer pessoa avaliando o desafio
+# precisa conseguir rodar o projeto sem instalar/configurar um banco
+# na máquina dela. Com `docker compose up -d`, o MySQL sobe pronto,
+# isolado, e some com `docker compose down -v` sem deixar rastro no
+# sistema.
+#
+# A porta externa é 3307 (não 3306) de propósito: 3306 é a porta
+# padrão do MySQL, e quem já tiver um MySQL local rodando (ex.: para
+# outro projeto) não vai ter conflito de porta ao subir este compose.
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: emporio-musica-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_dev_only
+      MYSQL_DATABASE: emporio_musica
+      MYSQL_USER: emporio
+      MYSQL_PASSWORD: emporio_dev_only
+    ports:
+      - "3307:3306"
+    volumes:
+      - emporio_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_dev_only"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  emporio_mysql_data:
